@@ -10397,6 +10397,39 @@ def _cmd_update_impl(args, gateway_mode: bool):
                 # ff-only failed — local and remote have diverged (e.g. upstream
                 # force-pushed or rebase).  Since local changes are already
                 # stashed, reset to match the remote exactly.
+                #
+                # LOCAL GUARD (not upstream): the reset below assumes all local
+                # work is uncommitted (and therefore stashed). A `main` that is
+                # *ahead* of origin — deliberately committed local patches —
+                # would be silently destroyed by `git reset --hard`. Refuse in
+                # that case and let the operator reconcile (rebase/merge), the
+                # same way the fork-sync path already skips to preserve commits.
+                _ahead = subprocess.run(
+                    git_cmd + ["rev-list", "--count", f"origin/{branch}..HEAD"],
+                    cwd=PROJECT_ROOT,
+                    capture_output=True,
+                    text=True,
+                )
+                _ahead_count = (_ahead.stdout or "").strip()
+                if _ahead_count not in ("", "0"):
+                    print(
+                        f"  ✗ Local {branch} is ahead of origin/{branch} by "
+                        f"{_ahead_count} commit(s) — refusing to `git reset --hard`, "
+                        "which would discard committed local work."
+                    )
+                    print(
+                        f"    Reconcile manually (e.g. `git rebase origin/{branch}`), "
+                        "then re-run `hermes update`."
+                    )
+                    print(
+                        "    Backups of this state: branch backup/local-patches-* and "
+                        "a bundle in ~/.hermes/state-snapshots/."
+                    )
+                    if auto_stash_ref is not None:
+                        print(
+                            f"    Your stashed working-tree changes are safe (ref: {auto_stash_ref})."
+                        )
+                    sys.exit(1)
                 print(
                     "  ⚠ Fast-forward not possible (history diverged), resetting to match remote..."
                 )
