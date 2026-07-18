@@ -98,13 +98,25 @@ def _run_state_kwargs(args: argparse.Namespace) -> Optional[dict[str, str]]:
 def _parse_workspace_flag(value: str) -> tuple[str, Optional[str]]:
     """Parse ``--workspace`` into ``(kind, path|None)``.
 
-    Accepts: ``scratch``, ``worktree``, ``worktree:<path>``, ``dir:<path>``.
+    Accepts: ``scratch``, ``worktree``, ``worktree:<path>``, ``dir:<path>``,
+    ``treehouse:<repo>`` (a pooled, reusable git worktree from treehouse — the
+    worker runs in a clean, dependency-cache-preserving checkout of ``<repo>``
+    acquired from the pool on dispatch and returned on completion).
     """
     if not value:
         return ("scratch", None)
     v = value.strip()
     if v in {"scratch", "worktree"}:
         return (v, None)
+    if v.startswith("treehouse:"):
+        repo = v[len("treehouse:"):].strip()
+        if not repo:
+            raise argparse.ArgumentTypeError(
+                "--workspace treehouse: requires a repo path after the colon"
+            )
+        # Stored as a worktree-kind task whose path is the treehouse sentinel;
+        # resolve_workspace acquires the pooled tree on dispatch.
+        return ("worktree", "treehouse:" + os.path.abspath(os.path.expanduser(repo)))
     for prefix, kind in (("dir:", "dir"), ("worktree:", "worktree")):
         if not v.startswith(prefix):
             continue
@@ -116,7 +128,7 @@ def _parse_workspace_flag(value: str) -> tuple[str, Optional[str]]:
         return (kind, os.path.expanduser(path))
     raise argparse.ArgumentTypeError(
         f"unknown --workspace value {value!r}: use scratch, worktree, "
-        "worktree:<path>, or dir:<path>"
+        "worktree:<path>, dir:<path>, or treehouse:<repo>"
     )
 
 
@@ -313,7 +325,8 @@ def build_parser(parent_subparsers: argparse._SubParsersAction) -> argparse.Argu
     p_create.add_argument("--parent", action="append", default=[],
                           help="Parent task id (repeatable)")
     p_create.add_argument("--workspace", default="scratch",
-                          help="scratch | worktree | worktree:<path> | dir:<path> "
+                          help="scratch | worktree | worktree:<path> | dir:<path> | "
+                               "treehouse:<repo> (pooled reusable worktree) "
                                "(default: scratch)")
     p_create.add_argument("--branch", default=None,
                           help="Branch name for worktree tasks, e.g. wt/t6-wire")
