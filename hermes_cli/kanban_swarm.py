@@ -175,7 +175,9 @@ def create_swarm(
     verifier_body = (
         "Review every worker handoff and blackboard update. Gate the swarm: "
         "complete only with metadata {\"gate\": \"pass\"} when evidence is "
-        "sufficient; otherwise block with exact missing work."
+        "sufficient; otherwise block with exact missing work. "
+        "Before judging completion, premortem: if this work fails in 48 hours, "
+        "what's the cause?"
         + context_suffix
     )
     verifier = kb.create_task(
@@ -194,7 +196,9 @@ def create_swarm(
 
     synthesizer_body = (
         "Synthesize the verified worker outputs into the final deliverable. "
-        "Do not start until the verifier has passed the gate."
+        "Do not start until the verifier has passed the gate. "
+        "Report dispersion. If sibling workers disagreed, surface the "
+        "disagreement in your output. Do not force convergence."
         + context_suffix
     )
     synthesizer = kb.create_task(

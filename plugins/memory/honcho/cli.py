@@ -1202,6 +1202,9 @@ def cmd_status(args) -> None:
     print(f"  Recall mode:    {hcfg.recall_mode}")
     print(f"  Context budget: {hcfg.context_tokens or '(uncapped)'} tokens")
     raw = getattr(hcfg, "raw", None) or {}
+    context_cadence = getattr(hcfg, "context_cadence", None) or 1
+    print(f"  Context cad:    every {context_cadence} turn{'s' if context_cadence != 1 else ''}")
+    print(f"  Injection:      {getattr(hcfg, 'injection_frequency', None) or 'every-turn'}")
     dialectic_cadence = getattr(hcfg, "dialectic_cadence", None) or raw.get("dialecticCadence") or 1
     print(f"  Dialectic cad:  every {dialectic_cadence} turn{'s' if dialectic_cadence != 1 else ''}")
     reasoning_cap = raw.get("reasoningLevelCap") or hcfg.reasoning_level_cap
@@ -1625,17 +1628,26 @@ def cmd_migrate(args) -> None:
     print()
     print("  OpenClaw's native memory stores context in local markdown files")
     print("  (USER.md, MEMORY.md, SOUL.md, ...) and injects them via QMD search.")
-    print("  Honcho replaces that with a cloud-backed, LLM-observable memory layer:")
+    print("  Honcho replaces that with an LLM-observable memory layer:")
     print("  context is retrieved semantically, injected automatically each turn,")
     print("  and enriched by a dialectic reasoning layer that builds over time.")
     print()
 
     # ── Step 1: Honcho account ────────────────────────────────────────────────
-    print("Step 1  Create a Honcho account")
+    print("Step 1  Verify Honcho connection")
     print()
     if has_key:
-        masked = f"...{cfg['apiKey'][-8:]}" if len(cfg["apiKey"]) > 8 else "set"
-        print(f"  Honcho API key already configured: {masked}")
+        api_key = cfg.get("apiKey", "")
+        if api_key:
+            masked = f"...{api_key[-8:]}" if len(api_key) > 8 else "set"
+            print(f"  Honcho API key already configured: {masked}")
+        else:
+            base_url = (
+                cfg.get("baseUrl")
+                or cfg.get("base_url")
+                or os.environ.get("HONCHO_BASE_URL", "")
+            )
+            print(f"  Self-hosted Honcho configured: {base_url or 'local instance'}")
         print("  Skip to Step 2.")
     else:
         print("  Honcho is a cloud memory service that gives Hermes persistent memory")
@@ -1779,7 +1791,7 @@ def cmd_migrate(args) -> None:
     print()
     print("  Storage")
     print("    OpenClaw: markdown files on disk, searched via QMD at prompt-build time.")
-    print("    Hermes:   cloud-backed Honcho peers. Files can stay on disk as source")
+    print("    Hermes:   Honcho peers. Files can stay on disk as source")
     print("              of truth; Honcho holds the live representation.")
     print()
     print("  Context injection")
