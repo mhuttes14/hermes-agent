@@ -156,6 +156,10 @@ class TestCmdStatus:
         out = capsys.readouterr().out
         assert "FAILED (Invalid API key)" in out
         assert "Connection... OK" not in out
+        # Cost/cadence summary lines render even when the config object
+        # predates the fields (defensive getattr defaults).
+        assert "Context cad:    every 1 turn" in out
+        assert "Injection:      every-turn" in out
 
     def test_auth_line_detects_oauth_grant(self, monkeypatch, capsys, tmp_path):
         import plugins.memory.honcho.cli as honcho_cli
@@ -744,3 +748,35 @@ class TestCmdSetupDeviceFlow:
         assert len(calls) == 1
         assert "apiKey" not in cfg.get("hosts", {}).get("hermes", {})
 
+    def test_device_option_hidden_when_not_advertised(self, monkeypatch, tmp_path):
+        _, calls, prompts = self._run_setup(
+            monkeypatch, tmp_path, answers=["cloud", "device"], device_available=False,
+        )
+        method_prompts = [p for p in prompts if "OAuth or API key" in p[0]]
+        assert method_prompts and method_prompts[0][1] == "oauth"
+        assert calls == []  # 'device' answer falls through to the api-key path
+
+
+class TestCmdMigrate:
+    """cmd_migrate must handle self-hosted setups (base URL, no apiKey)."""
+
+    def test_local_base_url_without_api_key_does_not_crash(
+        self, monkeypatch, capsys, tmp_path
+    ):
+        import plugins.memory.honcho.cli as honcho_cli
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(
+            honcho_cli, "_read_config", lambda: {"baseUrl": "http://localhost:8000"}
+        )
+        monkeypatch.setattr(honcho_cli, "_host_key", lambda: "hermes")
+        monkeypatch.delenv("HONCHO_API_KEY", raising=False)
+        monkeypatch.delenv("HONCHO_BASE_URL", raising=False)
+
+        # Before the fix this raised KeyError on cfg['apiKey'] because
+        # _resolve_api_key makes has_key truthy for base-URL-only configs.
+        honcho_cli.cmd_migrate(SimpleNamespace())
+
+        out = capsys.readouterr().out
+        assert "Self-hosted Honcho configured: http://localhost:8000" in out
+        assert "No user memory files detected" in out

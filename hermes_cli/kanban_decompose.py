@@ -105,6 +105,10 @@ In that case the task stays as one work item, just with a tightened spec and
 a concrete assignee. If no profile fits, use null and the system will route to
 the default_assignee.
 
+If the task is a single question answerable in <3 sentences or is a one-line
+chat-style ask, set fanout=false and route to the default_assignee. Reserve
+fan-out for tasks that genuinely span multiple domains.
+
 No preamble, no closing remarks, no code fences. Output only the JSON object.
 """
 
