@@ -5343,6 +5343,17 @@ def _cleanup_workspace(conn: sqlite3.Connection, task_id: str) -> None:
             return
         kind: Optional[str] = row["workspace_kind"]
         path: Optional[str] = row["workspace_path"]
+        # Treehouse pooled worktree: return it to the per-repo pool on normal
+        # completion (resets the tree, frees the slot, kills the holder). This is
+        # the NORMAL-completion path; crashed tasks (which never reach here) are
+        # reclaimed by the reconciler in the dispatch loop.
+        if kind == "worktree":
+            from . import treehouse as _treehouse
+
+            if _treehouse.is_treehouse_path(path):
+                _treehouse.release_for_task(task_id, path)
+                _try_cleanup_parent_workspaces(conn, task_id)
+                return
         if kind != "scratch" or not path:
             # This task's own workspace isn't a removable scratch dir, but its
             # completion may still unblock a deferred parent scratch cleanup
@@ -5459,6 +5470,31 @@ def _cleanup_worker_tmux(conn: sqlite3.Connection, task_id: str) -> None:
             _log.debug("Killed stale tmux session: %s", session)
     except Exception:
         pass  # best-effort — never block completion
+
+
+def reconcile_treehouse_leases(conn: sqlite3.Connection) -> list[str]:
+    """Reclaim pooled treehouse worktrees orphaned by crashed/failed tasks.
+
+    ``complete_task`` -> ``_cleanup_workspace`` returns trees on NORMAL
+    completion, but the crash paths (``release_stale_claims`` /
+    ``detect_crashed_workers``) reset tasks to ``ready`` without calling it, and
+    terminal-FAILURE states never reach it. This sweep reclaims trees whose
+    owning task is gone or terminal, gating each reclaim on the lease holder pid
+    still being alive (a reused pool path could otherwise reclaim a live task's
+    tree). Best-effort. Returns reclaimed task ids.
+    """
+    try:
+        from . import treehouse as _treehouse
+
+        def _status(task_id: str) -> Optional[str]:
+            row = conn.execute(
+                "SELECT status FROM tasks WHERE id = ?", (task_id,)
+            ).fetchone()
+            return row["status"] if row else None
+
+        return _treehouse.reconcile(_status)
+    except Exception:
+        return []  # best-effort — never block the dispatch tick
 
 
 # ---------------------------------------------------------------------------
@@ -6631,6 +6667,18 @@ def resolve_workspace(task: Task, *, board: Optional[str] = None) -> Path:
     so subsequent runs reuse the same directory.
     """
     kind = task.workspace_kind or "scratch"
+    # Treehouse pooled worktree: acquire (or reuse) a tree from the per-repo pool
+    # and return its real path. Triggered by a ``treehouse:<repo>`` sentinel on
+    # first dispatch, or by a concrete pool path persisted on a prior dispatch
+    # (rerun after a crash). All treehouse logic lives in the treehouse module so
+    # the core diff stays tiny.
+    if kind == "worktree" and task.workspace_path:
+        from . import treehouse as _treehouse
+
+        if _treehouse.is_treehouse_spec(
+            task.workspace_path
+        ) or _treehouse.is_treehouse_path(task.workspace_path):
+            return Path(_treehouse.resolve_for_task(task.id, task.workspace_path))
     if kind == "scratch":
         if task.workspace_path:
             # Legacy scratch tasks that were set to an explicit path get the
@@ -8323,6 +8371,10 @@ def _dispatch_once_locked(
         conn, stale_timeout_seconds=stale_timeout_seconds,
     )
     result.crashed = detect_crashed_workers(conn)
+    # Reclaim pooled treehouse worktrees orphaned by crashed/terminal tasks. The
+    # crash paths above reset tasks to 'ready' without running _cleanup_workspace,
+    # so this is the primary crash-return path for pooled worktrees. Best-effort.
+    reconcile_treehouse_leases(conn)
     # detect_crashed_workers stashes protocol-violation auto-blocks on
     # itself so the public list-return stays stable. Pull them into the
     # DispatchResult here so telemetry / tests see the trip.
