@@ -5447,6 +5447,21 @@ class GatewaySlashCommandsMixin:
             pending["thread_id"] = event.source.thread_id
         if event.message_id:
             pending["message_id"] = event.message_id
+        # Durable attribution trail: the pending marker below is ephemeral
+        # (overwritten each update, cleared on completion), so log the caller
+        # to the gateway log too — this is what lets us identify who/what
+        # issued an /update after the fact (incident 2026-07-17).
+        logger.info(
+            "/update requested via platform=%s chat_id=%s chat_type=%s "
+            "user_id=%s thread_id=%s message_id=%s session=%s",
+            event.source.platform.value,
+            event.source.chat_id,
+            event.source.chat_type,
+            event.source.user_id,
+            event.source.thread_id,
+            event.message_id,
+            session_key,
+        )
         _tmp_pending = pending_path.with_suffix(".tmp")
         _tmp_pending.write_text(json.dumps(pending), encoding="utf-8")
         _tmp_pending.replace(pending_path)
