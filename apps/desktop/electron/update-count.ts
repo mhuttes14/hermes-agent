@@ -10,21 +10,34 @@ function shouldCountCommits({ isShallow, hasMergeBase }) {
   return !(isShallow && !hasMergeBase)
 }
 
+// Resolve a presence-only update check when an exact commit count is not
+// available. A checkout with local commits is still current when the upstream
+// tip is already in its history.
+function resolveBinaryBehindCount({ currentSha, targetSha, ancestorExitCode }) {
+  if (currentSha && targetSha && (currentSha === targetSha || ancestorExitCode === 0)) {
+    return 0
+  }
+
+  return 1
+}
+
 // Resolve how many commits the local checkout is behind origin for the desktop
 // update indicator. When the count isn't meaningful (shallow + no merge-base)
-// fall back to a binary up-to-date check by SHA, exactly like the official-SSH
-// path in checkUpdates() and the CLI guard in hermes_cli/banner.py. Full clones
-// (developers / Docker dev images) keep the exact count path unchanged.
-function resolveBehindCount({ countStr, currentSha, targetSha, isShallow, hasMergeBase }) {
+// fall back to a binary up-to-date check. Full clones (developers / Docker dev
+// images) keep the exact count path unchanged.
+function resolveBehindCount({
+  countStr,
+  currentSha,
+  targetSha,
+  ancestorExitCode = undefined,
+  isShallow,
+  hasMergeBase
+}) {
   if (!shouldCountCommits({ isShallow, hasMergeBase })) {
-    if (currentSha && targetSha && currentSha === targetSha) {
-      return 0
-    }
-
-    return 1 // behind by an unknown amount — show a generic "update available"
+    return resolveBinaryBehindCount({ currentSha, targetSha, ancestorExitCode })
   }
 
   return Number.parseInt(countStr, 10) || 0
 }
 
-export { resolveBehindCount, shouldCountCommits }
+export { resolveBehindCount, resolveBinaryBehindCount, shouldCountCommits }

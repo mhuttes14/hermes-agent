@@ -176,7 +176,7 @@ import {
   SshConnection
 } from './ssh-connection'
 import { nativeOverlayWidth as computeNativeOverlayWidth, macTitleBarOverlayHeight } from './titlebar-overlay-width'
-import { resolveBehindCount, shouldCountCommits } from './update-count'
+import { resolveBehindCount, resolveBinaryBehindCount, shouldCountCommits } from './update-count'
 import { readLiveUpdateMarker, writeUpdateMarker } from './update-marker'
 import { runRebuildWithRetry } from './update-rebuild'
 import {
@@ -2435,11 +2435,17 @@ async function checkUpdates() {
       }
     }
 
+    const ancestor = await runGit(['merge-base', '--is-ancestor', targetSha, 'HEAD'], { cwd: updateRoot })
+
     return {
       supported: true,
       branch,
       currentBranch,
-      behind: currentSha && currentSha === targetSha ? 0 : 1,
+      behind: resolveBinaryBehindCount({
+        currentSha,
+        targetSha,
+        ancestorExitCode: ancestor.code
+      }),
       currentSha,
       targetSha,
       commits: [],
@@ -2486,10 +2492,15 @@ async function checkUpdates() {
     ? await git(['rev-list', `HEAD..origin/${branch}`, '--count'])
     : ''
 
+  const ancestorExitCode = shouldCountCommits({ isShallow, hasMergeBase })
+    ? undefined
+    : (await runGit(['merge-base', '--is-ancestor', targetSha, 'HEAD'], { cwd: updateRoot })).code
+
   const behind = resolveBehindCount({
     countStr,
     currentSha,
     targetSha,
+    ancestorExitCode,
     isShallow,
     hasMergeBase
   })
