@@ -2,7 +2,51 @@ import assert from 'node:assert/strict'
 
 import { test } from 'vitest'
 
-import { resolveBehindCount, shouldCountCommits } from './update-count'
+import { resolveBehindCount, resolveBinaryBehindCount, shouldCountCommits } from './update-count'
+
+test('binary check reports identical tips as up-to-date', () => {
+  assert.equal(
+    resolveBinaryBehindCount({
+      currentSha: 'same',
+      targetSha: 'same',
+      ancestorExitCode: 128
+    }),
+    0
+  )
+})
+
+test('binary check accepts an upstream ancestor beneath local commits', () => {
+  assert.equal(
+    resolveBinaryBehindCount({
+      currentSha: 'local-commit',
+      targetSha: 'upstream-tip',
+      ancestorExitCode: 0
+    }),
+    0
+  )
+})
+
+test('binary check reports a non-ancestor as an update', () => {
+  assert.equal(
+    resolveBinaryBehindCount({
+      currentSha: 'local-tip',
+      targetSha: 'upstream-tip',
+      ancestorExitCode: 1
+    }),
+    1
+  )
+})
+
+test('binary check reports a missing upstream object (exit 128) as an update', () => {
+  assert.equal(
+    resolveBinaryBehindCount({
+      currentSha: 'local-tip',
+      targetSha: 'missing-upstream-tip',
+      ancestorExitCode: 128
+    }),
+    1
+  )
+})
 
 // FAIL-BEFORE: pre-fix the function did `Number.parseInt(countStr) || 0`
 // unconditionally, so a shallow checkout with no merge-base surfaced the bogus
@@ -26,6 +70,20 @@ test('shallow checkout with no merge-base but identical SHA reports up-to-date',
       countStr: '12104',
       currentSha: 'abc',
       targetSha: 'abc',
+      isShallow: true,
+      hasMergeBase: false
+    }),
+    0
+  )
+})
+
+test('shallow checkout with local commits atop the target reports up-to-date', () => {
+  assert.equal(
+    resolveBehindCount({
+      countStr: '',
+      currentSha: 'local-commit',
+      targetSha: 'upstream-tip',
+      ancestorExitCode: 0,
       isShallow: true,
       hasMergeBase: false
     }),
