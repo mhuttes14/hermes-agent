@@ -201,11 +201,38 @@ def _check_via_local_git(repo_dir: Path) -> Optional[int]:
     """Count commits behind origin/main in a local checkout."""
     origin_url = _git_stdout(["remote", "get-url", "origin"], cwd=repo_dir)
     if _is_official_ssh_remote(origin_url):
-        head_rev = _git_stdout(["rev-parse", "HEAD"], cwd=repo_dir)
-        checked = _check_via_rev(head_rev) if head_rev else None
-        if checked == UPDATE_AVAILABLE_NO_COUNT:
+        try:
+            target = subprocess.run(
+                ["git", "ls-remote", _UPSTREAM_REPO_URL, "refs/heads/main"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except Exception:
+            return None
+        if target.returncode != 0 or not target.stdout:
+            return None
+
+        upstream_rev = target.stdout.split()[0]
+        if not upstream_rev:
+            return None
+
+        try:
+            ancestor = subprocess.run(
+                ["git", "merge-base", "--is-ancestor", upstream_rev, "HEAD"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                cwd=str(repo_dir),
+            )
+        except Exception:
+            return None
+
+        if ancestor.returncode == 0:
+            return 0
+        if ancestor.returncode in (1, 128):
             return 1
-        return checked
+        return None
 
     # Installer checkouts are shallow (`git clone --depth 1`). On a shallow
     # clone the history stops at a single commit, so a plain `git fetch` would
