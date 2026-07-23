@@ -51,7 +51,10 @@ const {
   applyUpdates,
   $updateApply,
   $updateOverlayOpen,
+  $updateOverlayTarget,
+  openUpdatesWindow,
   resetUpdateApplyState,
+  startActiveUpdate,
   startUpdatePoller,
   stopUpdatePoller,
   $updateStatus
@@ -67,7 +70,23 @@ const status = (over: Partial<DesktopUpdateStatus> = {}): DesktopUpdateStatus =>
   ...over
 })
 
-const lastToast = () => notifySpy.mock.calls.at(-1)?.[0] as { onDismiss: () => void }
+const lastToast = () =>
+  notifySpy.mock.calls.at(-1)?.[0] as {
+    action?: { onClick: () => void }
+    onDismiss: () => void
+  }
+
+const setRemote = (on: boolean) =>
+  setConnection({
+    baseUrl: 'http://box:9119',
+    isFullscreen: false,
+    mode: on ? 'remote' : 'local',
+    nativeOverlayWidth: 0,
+    token: 't',
+    wsUrl: 'ws://box:9119',
+    logs: [],
+    windowButtonPosition: null
+  })
 
 describe('maybeNotifyUpdateAvailable', () => {
   beforeEach(() => {
@@ -77,18 +96,18 @@ describe('maybeNotifyUpdateAvailable', () => {
   })
 
   it('shows when an update is available and not snoozed', () => {
-    maybeNotifyUpdateAvailable(status())
+    maybeNotifyUpdateAvailable(status(), 'client')
     expect(notifySpy).toHaveBeenCalledTimes(1)
     expect(notifySpy.mock.calls[0]?.[0]).toMatchObject({ icon: 'gift' })
   })
 
   it('stays quiet for new commits once the toast was closed', () => {
-    maybeNotifyUpdateAvailable(status())
+    maybeNotifyUpdateAvailable(status(), 'client')
     lastToast().onDismiss() // user closes it → cooldown starts
     notifySpy.mockClear()
 
     // A different commit lands while still within the cooldown window.
-    maybeNotifyUpdateAvailable(status({ targetSha: 'sha-b', behind: 9 }))
+    maybeNotifyUpdateAvailable(status({ targetSha: 'sha-b', behind: 9 }), 'client')
     expect(notifySpy).not.toHaveBeenCalled()
   })
 
@@ -96,18 +115,79 @@ describe('maybeNotifyUpdateAvailable', () => {
     vi.useFakeTimers()
     vi.setSystemTime(0)
 
-    maybeNotifyUpdateAvailable(status())
+    maybeNotifyUpdateAvailable(status(), 'client')
     lastToast().onDismiss()
     notifySpy.mockClear()
 
     vi.setSystemTime(25 * 60 * 60 * 1000) // > 24h cooldown
-    maybeNotifyUpdateAvailable(status({ targetSha: 'sha-b' }))
+    maybeNotifyUpdateAvailable(status({ targetSha: 'sha-b' }), 'client')
     expect(notifySpy).toHaveBeenCalledTimes(1)
   })
 
   it('does nothing when already up to date', () => {
-    maybeNotifyUpdateAvailable(status({ behind: 0 }))
+    maybeNotifyUpdateAvailable(status({ behind: 0 }), 'client')
     expect(notifySpy).not.toHaveBeenCalled()
+  })
+})
+
+describe('update target routing', () => {
+  const clientCheckSpy = vi.fn()
+  const clientApplySpy = vi.fn()
+
+  beforeEach(() => {
+    storage.clear()
+    notifySpy.mockClear()
+    checkHermesUpdateSpy.mockReset()
+    updateHermesSpy.mockReset()
+    clientCheckSpy.mockReset()
+    clientApplySpy.mockReset()
+    clientCheckSpy.mockResolvedValue(status({ behind: 0 }))
+    clientApplySpy.mockResolvedValue({ ok: true, manual: true, command: 'hermes update' })
+    resetUpdateApplyState()
+    $updateOverlayOpen.set(false)
+    $updateOverlayTarget.set('backend')
+    setRemote(true)
+    ;(globalThis as unknown as { window: unknown }).window = {
+      hermesDesktop: {
+        updates: {
+          apply: clientApplySpy,
+          check: clientCheckSpy
+        }
+      }
+    }
+  })
+
+  afterEach(() => {
+    delete (globalThis as unknown as { window?: unknown }).window
+  })
+
+  it('opens a client update on the client even in remote mode', () => {
+    openUpdatesWindow('client')
+
+    expect($updateOverlayTarget.get()).toBe('client')
+    expect($updateOverlayOpen.get()).toBe(true)
+    expect(clientCheckSpy).toHaveBeenCalled()
+    expect(checkHermesUpdateSpy).not.toHaveBeenCalled()
+  })
+
+  it('starts a client update on the client even in remote mode', () => {
+    startActiveUpdate('client')
+
+    expect($updateOverlayTarget.get()).toBe('client')
+    expect(clientApplySpy).toHaveBeenCalled()
+    expect(updateHermesSpy).not.toHaveBeenCalled()
+  })
+
+  it('routes client and backend update toasts to their own overlays', () => {
+    maybeNotifyUpdateAvailable(status(), 'client')
+    lastToast().action?.onClick()
+    expect($updateOverlayTarget.get()).toBe('client')
+
+    storage.clear()
+    notifySpy.mockClear()
+    maybeNotifyUpdateAvailable(status({ targetSha: 'backend:1' }), 'backend')
+    lastToast().action?.onClick()
+    expect($updateOverlayTarget.get()).toBe('backend')
   })
 })
 
@@ -174,18 +254,6 @@ describe('checkBackendUpdates', () => {
     $backendUpdateStatus.set(null)
     vi.useRealTimers()
   })
-
-  const setRemote = (on: boolean) =>
-    setConnection({
-      baseUrl: 'http://box:9119',
-      isFullscreen: false,
-      mode: on ? 'remote' : 'local',
-      nativeOverlayWidth: 0,
-      token: 't',
-      wsUrl: 'ws://box:9119',
-      logs: [],
-      windowButtonPosition: null
-    })
 
   it('maps the backend /update/check onto the backend status, including commits', async () => {
     setRemote(true)
