@@ -327,6 +327,20 @@ export interface DesktopUpdateStatus {
   commits?: DesktopUpdateCommit[]
   dirty?: boolean
   fetchedAt?: number
+  /**
+   * Set when the previous update attempt was recorded but never landed. The
+   * updater replaces the app we run from, so its exit code is unobservable —
+   * see electron/update-receipt.ts. Drives a persistent "last update failed"
+   * state instead of a fresh optimistic "update available" toast.
+   */
+  lastUpdateFailure?: DesktopUpdateFailure
+}
+
+export interface DesktopUpdateFailure {
+  attemptedAt: number
+  branch?: string
+  currentSha?: string
+  targetSha?: string
 }
 
 export type DesktopUpdateDirtyStrategy = 'abort' | 'stash' | 'force'

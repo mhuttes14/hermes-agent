@@ -156,6 +156,7 @@ import { nativeOverlayWidth as computeNativeOverlayWidth, macTitleBarOverlayHeig
 import { resolveBehindCount, resolveBinaryBehindCount, shouldCountCommits } from './update-count'
 import { readLiveUpdateMarker, writeUpdateMarker } from './update-marker'
 import { runRebuildWithRetry } from './update-rebuild'
+import { reconcileUpdateReceipt, writeUpdateAttempt } from './update-receipt'
 import {
   buildRelaunchScript,
   collectRelaunchArgs,
@@ -2828,6 +2829,22 @@ async function applyUpdates(opts = {}) {
     if (Number.isInteger(child.pid)) {
       writeUpdateMarker(HERMES_HOME, child.pid)
     }
+
+    // Record what we attempted. The updater replaces the binary we're running
+    // from and force-kills stragglers, so we can never await its exit code (see
+    // update-receipt.ts). Instead we reconcile this against git HEAD on the next
+    // check: if HEAD never moved, the update did not land — and we surface that
+    // rather than cheerfully re-offering the same doomed update forever.
+    const [attemptHead, attemptTarget] = await Promise.all([
+      runGit(['rev-parse', 'HEAD'], { cwd: updateRoot }),
+      runGit(['rev-parse', `origin/${branch}`], { cwd: updateRoot })
+    ])
+
+    writeUpdateAttempt(HERMES_HOME, {
+      branch,
+      currentSha: (attemptHead.stdout || '').trim(),
+      targetSha: (attemptTarget.stdout || '').trim()
+    })
 
     rememberLog(`[updates] launched updater: ${updater} ${updaterArgs.join(' ')}; exiting desktop to release venv shim`)
 
@@ -10343,15 +10360,29 @@ ipcMain.handle('hermes:terminal:cwd', async (_event, id) => {
 
 ipcMain.handle('hermes:terminal:dispose', (_event, id) => disposeTerminalSession(String(id || '')))
 
-ipcMain.handle('hermes:updates:check', async () =>
-  checkUpdates().catch(error => ({
+ipcMain.handle('hermes:updates:check', async () => {
+  const status = await checkUpdates().catch(error => ({
     supported: true,
     branch: readDesktopUpdateConfig().branch,
     error: 'check-failed',
     message: error?.message || String(error),
     fetchedAt: Date.now()
   }))
-)
+
+  // An update is still running (the user relaunched mid-update): HEAD legitimately
+  // hasn't moved yet, so don't misread that as a failed attempt. Reuse the marker
+  // gate that already answers "is an update live right now?".
+  if (readLiveUpdateMarker(HERMES_HOME)) {
+    return status
+  }
+
+  return {
+    ...status,
+    lastUpdateFailure: reconcileUpdateReceipt(HERMES_HOME, {
+      currentSha: (status as any)?.currentSha
+    })
+  }
+})
 
 ipcMain.handle('hermes:updates:apply', async (_event, payload) =>
   applyUpdates(payload || {}).catch(error => ({
