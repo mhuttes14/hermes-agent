@@ -207,6 +207,15 @@ export function maybeNotifyUpdateAvailable(status: DesktopUpdateStatus | null, t
     return
   }
 
+  // The previous attempt at THIS upstream sha never landed. Re-firing the
+  // cheerful "update ready" toast just walks the user back into the identical
+  // failure — and the snooze below never engages, because it only starts when a
+  // toast is DISMISSED, not when an apply fails. Stay quiet until upstream
+  // advances past the sha we failed on; the next commit may well be the fix.
+  if (status.lastUpdateFailure && status.lastUpdateFailure.targetSha === status.targetSha) {
+    return
+  }
+
   if (isUpdateToastSnoozed()) {
     return
   }
@@ -341,6 +350,23 @@ export async function checkUpdates(): Promise<DesktopUpdateStatus | null> {
   try {
     const status = await bridge.check()
     $updateStatus.set(status)
+
+    // Surface an attempt that never landed. Without this the failure is
+    // invisible in the desktop app entirely — it happens after we've quit, so
+    // only the separate installer window ever saw it. Reuses the existing
+    // 'error' stage, which updates-overlay.tsx already renders as a retryable
+    // card, so there's no new component or store to maintain.
+    if (status?.lastUpdateFailure && !$updateApply.get().applying) {
+      // Empty message on purpose: ErrorView already falls back to its own
+      // localized copy, so this adds no new i18n keys to keep in sync.
+      $updateApply.set({
+        ...IDLE,
+        stage: 'error',
+        error: 'last-update-failed',
+        message: ''
+      })
+    }
+
     maybeNotifyUpdateAvailable(status, 'client')
     void refreshDesktopVersion()
 

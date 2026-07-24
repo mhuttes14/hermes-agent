@@ -128,6 +128,24 @@ describe('maybeNotifyUpdateAvailable', () => {
     maybeNotifyUpdateAvailable(status({ behind: 0 }), 'client')
     expect(notifySpy).not.toHaveBeenCalled()
   })
+
+  it('stays quiet when the last attempt at this same sha never landed', () => {
+    // Re-offering it walks the user straight back into the identical failure,
+    // and the dismissal-based snooze never engages for a failed apply.
+    maybeNotifyUpdateAvailable(
+      status({ lastUpdateFailure: { attemptedAt: 0, targetSha: 'sha-a' } }),
+      'client'
+    )
+    expect(notifySpy).not.toHaveBeenCalled()
+  })
+
+  it('offers again once upstream advances past the sha that failed', () => {
+    maybeNotifyUpdateAvailable(
+      status({ lastUpdateFailure: { attemptedAt: 0, targetSha: 'sha-old' } }),
+      'client'
+    )
+    expect(notifySpy).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('update target routing', () => {
